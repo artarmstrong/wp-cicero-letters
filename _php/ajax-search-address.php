@@ -29,10 +29,14 @@ function get_response($url, $postfields=''){
 global $wpdb;
 $letter = $wpdb->get_row("SELECT * FROM ".$wpdb->prefix."ciceroletters WHERE `id` = ".mysql_real_escape_string($_POST['letterid'])." LIMIT 1;");
 
+// Fix officials
+$letter->official = explode(",", $letter->official);
+
 // Check if its a test, otherwise run cicero
 $officials_emails = array();
 $officials_names = array();
 $officials_state_same = true;
+$officials_state_found = true;
 if($letter->test == "true"){
 
 	$officials_emails[] = $letter->test_email;
@@ -41,9 +45,11 @@ if($letter->test == "true"){
 }else{
 
 	// Some constants that we will use:
-	$username = 'email@email.com';
-	$password = 'password';
-	//$search_loc = '600+4th+Ave+Number+4,+Seattle,+WA+98104';
+	$username = 'julie@hubbellcommunications.com';
+	$password = 'Hubbell2';
+	//$search_loc = '2104+SE+Morrison+Street,+Portland,+OR+97214';
+	//$search_loc = '15515+Mink+Rd+NE,+Woodinville,+WA+98077';
+	//$search_loc = '642+Johnson+Street,+Victoria,+BC+V8W+1M6,+Canada';
 	$search_loc = str_replace(" ", "+", $_POST['address']);
 
 	// Obtain a token:
@@ -58,54 +64,51 @@ if($letter->test == "true"){
 	$token = $response->token;
 	$user = $response->user;
 
-	// Get an official query response
-	$official_level = explode(":", $letter->official);
-	$official_district_type = $official_level[0];
-	$official_role = (isset($official_level[1]) ? $official_level[1] : "");
+	// Loop through officials if theres multiple
+	if(count($letter->official) > 0){
+    	foreach($letter->official as $official_position){
 
-	$query_string = "search_loc=$search_loc&district_type=$official_district_type" . (!empty($official_role) ? "&role=$official_role" : "") . "&token=$token&user=$user&format=json";
-	$official_response = get_response("http://cicero.azavea.com/v3.1/official?$query_string");
+        	// Get an official query response
+        	$official_level = explode(":", $official_position);
+        	$official_district_type = $official_level[0];
+        	$official_role = (isset($official_level[1]) ? $official_level[1] : "");
 
-	if(count($official_response->response->results->candidates) == 0):
+        	$query_string = "search_loc=$search_loc&district_type=$official_district_type" . (!empty($official_role) ? "&role=$official_role" : "") . "&token=$token&user=$user&format=json";
+        	$official_response = get_response("http://cicero.azavea.com/v3.1/official?$query_string");
 
-		echo 'No location found for the given address.';
+        	if(count($official_response->response->results->candidates) > 0){
 
-	endif;
+        	    //$officials_state_found = false;
 
-	// Print information for each official:
-	foreach($official_response->response->results->candidates[0]->officials as $o):
+        	    // Print information for each official:
+                foreach($official_response->response->results->candidates[0]->officials as $o){
 
-		// Get state district
-		if(!isset($o->office->district->state) || $o->office->district->state != $letter->state)
-			$officials_state_same = false;
+                    // Get state district
+                    if(isset($o->office->district->state) && $o->office->district->state == $letter->state){
 
-		// Get name
-		$officials_names[] = $o->office->title." ".$o->first_name." ".$o->last_name;
+                    	//$officials_state_same = false;
 
-		// Get email and check for validity
-	  foreach($o->email_addresses as $e):
-	    if(preg_match('/^[_a-z0-9-]+(\.[_a-z0-9-]+)*@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,3})$/', $e) > 0){
-		    $officials_emails[] = $e;
-		    break;
-		  }
-	  endforeach;
-
-	endforeach;
+                        // Get name and email and check for validity
+                        foreach($o->email_addresses as $e){
+                            $officials_emails[] = $e;
+                            $officials_names[] = $o->office->title." ".$o->first_name." ".$o->last_name;
+                            break;
+                        }
+                    }
+                }
+        	}
+    	}
+    }
 
 }
 
 // If email is available continue
-if(!$officials_state_same){
-?>
-
-	<p>Unfortunately officials matching your address were found.</p>
-
-<?php
-}elseif(!empty($officials_emails)){
+if(!empty($officials_emails)){
 
 	// Get all emails
 	$official_emails_list = implode(",", $officials_emails);
-	$official_names_list = implode(" / ", $officials_names);
+	$official_names_list = implode(",", $officials_names);
+	$official_output_names_list = implode(" / ", $officials_names);
 	?>
 
 	<form id="ciceroletters_email_form" method="post">
@@ -126,21 +129,21 @@ if(!$officials_state_same){
 		<table>
 			<tr>
 				<td>
-					Recipient(s): <?= $official_names_list; ?><br /><br />
+					Recipient(s): <?= $official_output_names_list; ?><br /><br />
 				</td>
 			</tr>
 			<tr>
 				<td>
 					Subject
 					<br />
-					<input type='text' id="ciceroletters_email_subject" name='ciceroletters_email_subject' style="width:200px;" value='<?= $letter->subject; ?>' />
+					<input type='text' id="ciceroletters_email_subject" name='ciceroletters_email_subject' style="width:600px;" value='<?= $letter->subject; ?>' />
 				</td>
 			</tr>
 			<tr>
 				<td>
 					Editable Text
 					<br />
-					<textarea id="ciceroletters_email_body" name='ciceroletters_email_body' style="width:200px;height:150px;"><?= str_replace("<br />", "\n", $letter->body); ?></textarea>
+					<textarea id="ciceroletters_email_body" name='ciceroletters_email_body' style="width:600px;height:300px;"><?= str_replace("<br />", "\n", $letter->body); ?></textarea>
 					<br />
 					<small>If pasting from a word processor please save as plain text first.</small>
 				</td>
@@ -176,10 +179,12 @@ if(!$officials_state_same){
 				<td><input type='text' id='ciceroletters_email_city' name='ciceroletters_email_city' value='' /></td>
 			</tr>
 		</table>
+
 		<?php
 		if($letter->bcc_email != "" && $letter->bcc_note != "")
 			echo "<p>* - ".$letter->bcc_note."</p>";
 		?>
+
 		<br /><br />
 
 		<input type="submit" name="ciceroletters_email_submit" id="ciceroletters_email_submit" value="Send Email" />
